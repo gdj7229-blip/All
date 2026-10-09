@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#120a24" />
+  <meta name="description" content="A delightful 3D animated birthday wish." />
+  <title>🎉 Happy Birthday!</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Quicksand:wght@400;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- Import map so we can use clean ES-module imports for Three.js -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- ===== Accessibility: skip + live region ===== -->
+  <a class="skip-link" href="#wish-heading">Skip to birthday message</a>
+  <div id="sr-status" class="sr-only" role="status" aria-live="polite"></div>
+
+  <!-- ===== 3D canvas ===== -->
+  <canvas id="scene" aria-hidden="true"></canvas>
+
+  <!-- ===== Loading screen ===== -->
+  <div id="loader" class="loader" role="status" aria-live="polite">
+    <div class="loader__cake" aria-hidden="true">🎂</div>
+    <p class="loader__text">Baking your cake…</p>
+  </div>
+
+  <!-- ===== Start gate (needed for sound + a satisfying reveal) ===== -->
+  <div id="start-gate" class="start-gate" hidden>
+    <div class="start-gate__card">
+      <div class="start-gate__emoji" aria-hidden="true">🎁</div>
+      <h1 class="start-gate__title">A surprise is waiting…</h1>
+      <p class="start-gate__sub">Tap to open — then click the balloons & gifts, drag to spin 360°, and double-click anywhere to zoom in.</p>
+      <button id="start-btn" class="btn btn--primary start-gate__btn" type="button">
+        Open the surprise 🎉
+      </button>
+    </div>
+  </div>
+
+  <!-- ===== Main overlay content ===== -->
+  <main id="overlay" class="overlay" hidden>
+    <section class="card" aria-labelledby="wish-heading">
+      <button id="card-dismiss" class="card__close" type="button"
+              aria-label="Hide message and explore the scene" title="Hide & explore">✕</button>
+      <p class="card__eyebrow">Happy Birthday</p>
+      <h1 id="wish-heading" class="card__name">
+        <!-- name injected here -->
+      </h1>
+      <p id="wish-message" class="card__message"></p>
+
+      <!-- Countdown / status -->
+      <div id="countdown" class="countdown" aria-live="polite"></div>
+
+      <p id="wish-from" class="card__from" hidden></p>
+
+      <div class="card__actions">
+        <button id="celebrate-btn" class="btn btn--primary" type="button">
+          🎉 Celebrate!
+        </button>
+        <button id="wish-btn" class="btn btn--ghost" type="button">
+          🕯️ Make a wish
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== Interaction hint toast ===== -->
+  <div id="hint" class="hint" aria-hidden="true"></div>
+
+  <!-- ===== Floating control bar ===== -->
+  <div id="controls" class="controls" hidden>
+    <button id="message-btn" class="icon-btn" type="button"
+            title="Show birthday message (M)" aria-label="Show birthday message">💌</button>
+    <button id="light-btn" class="icon-btn" type="button"
+            title="Light the candles (L)" aria-label="Light the candles">🔥</button>
+    <button id="popall-btn" class="icon-btn" type="button"
+            title="Pop all balloons (B)" aria-label="Pop all balloons">🎈</button>
+    <button id="party-btn" class="icon-btn" type="button"
+            aria-pressed="false" title="Party mode (D)" aria-label="Toggle party disco mode">🪩</button>
+    <button id="cut-btn" class="icon-btn" type="button"
+            title="Cut the cake (X)" aria-label="Cut the cake">🔪</button>
+    <button id="firework-btn" class="icon-btn" type="button"
+            title="Fireworks (F)" aria-label="Launch fireworks">🎆</button>
+    <button id="piano-btn" class="icon-btn" type="button"
+            aria-pressed="false" title="Piano (P)" aria-label="Toggle piano">🎹</button>
+    <button id="tour-btn" class="icon-btn" type="button"
+            title="Take the tour (T)" aria-label="Fly to next viewpoint">🎬</button>
+    <button id="sound-toggle" class="icon-btn" type="button"
+            aria-pressed="true" title="Toggle sound" aria-label="Toggle sound">🔊</button>
+    <button id="motion-toggle" class="icon-btn" type="button"
+            aria-pressed="false" title="Toggle motion" aria-label="Reduce motion">🌀</button>
+    <button id="replay-btn" class="icon-btn" type="button"
+            title="Reset view & replay (R)" aria-label="Reset view and replay">↺</button>
+  </div>
+
+  <!-- ===== Surprise card (revealed by popping balloons) ===== -->
+  <div id="card-modal" class="card-modal" hidden role="dialog" aria-modal="true"
+       aria-labelledby="card-modal-title">
+    <div class="card-modal__sheet">
+      <div class="card-modal__emoji" id="card-modal-emoji" aria-hidden="true">🎈</div>
+      <h2 id="card-modal-title" class="card-modal__title">A little wish for you</h2>
+      <p id="card-modal-text" class="card-modal__text"></p>
+      <div class="card-modal__actions">
+        <button id="card-next" class="btn btn--ghost" type="button">Another one 🎈</button>
+        <button id="card-close" class="btn btn--primary" type="button">Thanks! ✨</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Playable piano ===== -->
+  <div id="piano" class="piano" hidden aria-label="Playable piano">
+    <div class="piano__bar">
+      <strong class="piano__title">🎹 Piano</strong>
+      <button id="piano-song" class="btn btn--primary piano__song" type="button">▶ Play “Happy Birthday”</button>
+      <span class="piano__hint">Click keys or use your keyboard (A S D F G H J K)</span>
+      <button id="piano-hide" class="icon-btn piano__hide" type="button" aria-label="Close piano">✕</button>
+    </div>
+    <div id="piano-keys" class="piano__keys" role="group" aria-label="Piano keys"></div>
+  </div>
+
+  <!-- Confetti overlay canvas (2D, sits above 3D) -->
+  <canvas id="confetti" aria-hidden="true"></canvas>
+
+  <!-- Load the editable config BEFORE the app so the name/date are available -->
+  <script src="config.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

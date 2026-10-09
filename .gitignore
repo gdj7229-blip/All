@@ -1,0 +1,105 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets — examples stay in the repo
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+config.json
+!config.example.json
+js/config.local.js
+
+# Local databases, uploads, and runtime data
+*.db
+*.sqlite
+*.sqlite3
+chat-app/backend/data/
+extension/backend/data/
+extension/backend/recordings/
+extension/backend/static/uploads/
+piano/chat-logs/
+piano/leave-msgs/
+piano/room-media/
+
+# Build and package output
+dist/
+dist-ssr/
+build/
+release/
+.vite/
+.cache/
+.parcel-cache/
+coverage/
+*.tsbuildinfo
+*.apk
+*.aab
+*.ipa
+*.exe
+*.msi
+*.jsbundle
+*.hprof
+.next/
+out/
+
+# Android / iOS local build files
+.gradle/
+.kotlin/
+.cxx/
+local.properties
+keystore.properties
+*.keystore
+*.jks
+!debug.keystore
+DerivedData/
+**/Pods/
+
+# Logs and process files
+*.log
+logs/
+.pm2/
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.metro-health-check*
+
+# OS and editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local assistant settings
+.claude/
