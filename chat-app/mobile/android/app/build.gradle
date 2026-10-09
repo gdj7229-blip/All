@@ -1,0 +1,111 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+/**
+ * This is the configuration block to customize your React Native Android app.
+ * By default you don't need to apply any configuration, just uncomment the lines you need.
+ */
+react {
+    /* Autolinking */
+    autolinkLibrariesWithApp()
+}
+
+/**
+ * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
+ */
+def enableProguardInReleaseBuilds = true
+
+def releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
+def releaseKeystoreProperties = null
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystoreProperties = new Properties()
+    releaseKeystorePropertiesFile.withInputStream { releaseKeystoreProperties.load(it) }
+}
+
+/**
+ * The preferred build flavor of JavaScriptCore (JSC)
+ *
+ * Only used when Hermes is disabled (hermesEnabled=false). We keep Hermes on, so
+ * this is here for completeness.
+ */
+def jscFlavor = 'org.webkit:android-jsc:+'
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace "org.familychat.app"
+    defaultConfig {
+        applicationId "org.familychat.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 3
+        versionName "2.1"
+    }
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        // Private release key, read from android/keystore.properties (gitignored).
+        if (releaseKeystoreProperties != null) {
+            release {
+                storeFile file(releaseKeystoreProperties['storeFile'])
+                storePassword releaseKeystoreProperties['storePassword']
+                keyAlias releaseKeystoreProperties['keyAlias']
+                keyPassword releaseKeystoreProperties['keyPassword']
+                // Sign with every scheme so the APK verifies on any installer,
+                // including older Samsung package installers and file managers.
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+            // Allow cleartext (http) in debug so Metro / a local dev server works.
+            manifestPlaceholders = [usesCleartextTraffic: "true"]
+        }
+        release {
+            // The app only talks to https endpoints, so cleartext stays off in release.
+            manifestPlaceholders = [usesCleartextTraffic: "false"]
+            // Never fall back to the public debug key for a shareable build: without
+            // android/keystore.properties the release APK is simply left unsigned.
+            signingConfig releaseKeystoreProperties != null ? signingConfigs.release : null
+            minifyEnabled enableProguardInReleaseBuilds
+            // Strip unused resources too, so the install is smaller on low-end phones.
+            shrinkResources enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+    packagingOptions {
+        jniLibs {
+            // Compress native libs and let the installer extract them. The APK is much
+            // smaller to share, and it still installs if a messaging app or file manager
+            // re-zips it without page alignment (uncompressed libs then fail to install).
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    // The version of react-native is set by the React Native Gradle Plugin
+    implementation("com.facebook.react:react-android")
+
+    if (hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+
+    // Used by native in-app media backup (org.familychat.app.mediasync)
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}

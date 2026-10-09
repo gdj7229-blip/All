@@ -1,0 +1,246 @@
+"""Piano live-stream backend.
+
+Relays JPEG frames from the voice assistant to the web viewer.
+Spoken microphone clips are saved and listed for playback.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
+
+import auth
+from audio_store import MAX_WAV_BYTES, AudioStore
+from hub import LiveHub
+from app_updates import installer_file, latest_payload
+from join_log import JoinLog
+
+ROOT = Path(__file__).resolve().parent
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("harmony.backend")
+
+app = FastAPI(title="Piano", version="2.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+live_hub = LiveHub(JoinLog(ROOT / "data" / "joins.json"))
+audio_store = AudioStore(ROOT / "data" / "audio")
+
+
+class ListenRequest(BaseModel):
+    enabled: bool
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+def _iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _session_meta(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "hostname": str(payload.get("hostname") or "pc"),
+        "username": str(payload.get("username") or "user"),
+        "width": int(payload.get("width") or 0),
+        "height": int(payload.get("height") or 0),
+        "fps": float(payload.get("fps") or 0),
+        "started_at": _iso(),
+        "viewers": live_hub.viewer_count(),
+    }
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest) -> dict[str, Any]:
+    token = auth.login(body.password)
+    return {"token": token}
+
+
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "streaming": live_hub.session is not None,
+        "viewers": live_hub.viewer_count(),
+        "voice_clips": audio_store.count(),
+        "listening": live_hub.listening_enabled,
+        "assistant_connected": live_hub.assistant_connected(),
+        "joins": len(live_hub.join_log.items),
+    }
+
+
+@app.get("/api/live", dependencies=[Depends(auth.require_auth)])
+def live_status() -> dict[str, Any]:
+    session = live_hub.session
+    return {
+        "live": session is not None,
+        "viewers": live_hub.viewer_count(),
+        "has_frame": live_hub.latest_jpeg is not None,
+        "session": session,
+    }
+
+
+@app.get("/api/live/frame", dependencies=[Depends(auth.require_auth)])
+def live_frame() -> Response:
+    if not live_hub.latest_jpeg:
+        raise HTTPException(status_code=404, detail="No live frame")
+    return Response(
+        content=live_hub.latest_jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/joins", dependencies=[Depends(auth.require_auth)])
+def list_joins(limit: int = 80) -> dict[str, Any]:
+    return {"items": live_hub.join_log.list(limit)}
+
+
+@app.get("/api/listen", dependencies=[Depends(auth.require_auth)])
+def get_listen() -> dict[str, Any]:
+    return live_hub.listen_payload()
+
+
+@app.post("/api/listen", dependencies=[Depends(auth.require_auth)])
+async def set_listen(body: ListenRequest) -> dict[str, Any]:
+    payload = await live_hub.set_listening(body.enabled)
+    logger.info(
+        "Voice assistant %s (desktop %s)",
+        "on" if payload["enabled"] else "off",
+        "connected" if payload["assistant_connected"] else "offline",
+    )
+    return payload
+
+
+@app.get("/api/app/latest")
+def app_latest() -> dict[str, Any]:
+    return latest_payload()
+
+
+@app.get("/api/app/download")
+def app_download() -> FileResponse:
+    return installer_file()
+
+
+@app.get("/api/audio", dependencies=[Depends(auth.require_auth)])
+def list_audio(limit: int = 50) -> dict[str, Any]:
+    return {"items": audio_store.list(limit)}
+
+
+@app.get("/api/audio/{clip_id}", dependencies=[Depends(auth.require_auth)])
+def get_audio(clip_id: str) -> FileResponse:
+    path = audio_store.wav_path(clip_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Voice clip not found")
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"{clip_id}.wav",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@app.post("/api/audio")
+async def upload_audio(
+    file: UploadFile = File(...),
+    transcript: str = Form(""),
+    wake: str = Form("false"),
+    hostname: str = Form(""),
+    username: str = Form(""),
+) -> dict[str, Any]:
+    wav = await file.read()
+    if len(wav) > MAX_WAV_BYTES:
+        raise HTTPException(status_code=413, detail="Audio clip is too large")
+    wake_flag = str(wake).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        item = audio_store.save(
+            wav,
+            transcript=transcript,
+            wake=wake_flag,
+            hostname=hostname,
+            username=username,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await live_hub.push_voice(item)
+    return item
+
+
+@app.websocket("/ws/record")
+async def record_socket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    await live_hub.set_source(websocket)
+    logger.info("Live source connected from %s", websocket.client)
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            text = message.get("text")
+            data = message.get("bytes")
+            if text:
+                try:
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                kind = str(payload.get("type") or "")
+                if kind in {"start", "segment"}:
+                    was_live = live_hub.session is not None
+                    await live_hub.set_session(_session_meta(payload))
+                    if not was_live:
+                        clock = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                        logger.info("Screen shared at %s", clock)
+                    await websocket.send_json({"type": "ack"})
+                elif kind == "stop":
+                    await live_hub.set_session(None)
+                    await websocket.send_json({"type": "stopped"})
+            elif data:
+                await live_hub.push_frame(data)
+    except WebSocketDisconnect:
+        logger.info("Live source disconnected")
+    except Exception:
+        logger.exception("Live source error")
+    finally:
+        await live_hub.clear_source(websocket)
+        await live_hub.set_session(None)
+
+
+@app.websocket("/ws/live", dependencies=[Depends(auth.require_auth_ws)])
+async def live_socket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    await live_hub.add(websocket)
+    logger.info("Viewer connected (%s)", live_hub.viewer_count())
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        live_hub.remove(websocket)
+        await live_hub.notify_viewer_left()
+        logger.info("Viewer left (%s)", live_hub.viewer_count())
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)

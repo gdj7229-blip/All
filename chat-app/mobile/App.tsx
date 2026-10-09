@@ -1,0 +1,76 @@
+import React, { useEffect } from 'react';
+import { AppState, StatusBar } from 'react-native';
+import { isMediaSyncAvailable, pauseMediaSync, resumeMediaSync } from './src/native/MediaSync';
+import { getDeviceInfo } from './src/native/deviceInfo';
+import { logDeviceOpen } from './src/api';
+import { loadSession } from './src/storage';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import type { RootStackParamList } from './src/types';
+import SplashScreen from './src/screens/SplashScreen';
+import WebViewScreen from './src/screens/WebViewScreen';
+import PinScreen from './src/screens/PinScreen';
+import NameScreen from './src/screens/NameScreen';
+import ChatScreen from './src/screens/ChatScreen';
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+export default function App() {
+  useEffect(() => {
+    if (!isMediaSyncAvailable()) {
+      return;
+    }
+    const syncWithAppState = (state: string | null | undefined) => {
+      if (state === 'active') {
+        resumeMediaSync().catch(() => {});
+      } else if (state === 'background' || state === 'inactive') {
+        pauseMediaSync().catch(() => {});
+      }
+    };
+    syncWithAppState(AppState.currentState);
+    const sub = AppState.addEventListener('change', syncWithAppState);
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    // Report each app open (device + time) to the backend, throttled so a quick
+    // background/foreground bounce doesn't spam rows. Only devices that already
+    // have a session (completed the PIN once) are logged. Best-effort — never
+    // blocks or surfaces errors to the user.
+    let lastReportedAt = 0;
+    const report = async () => {
+      const now = Date.now();
+      if (now - lastReportedAt < 60_000) {
+        return;
+      }
+      const session = await loadSession();
+      if (!session?.token) {
+        return;
+      }
+      lastReportedAt = now;
+      logDeviceOpen(session.token, getDeviceInfo()).catch(() => {});
+    };
+    report();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        report();
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  return (
+    <NavigationContainer>
+      {/* Android is always edge-to-edge on RN 0.87, so the bar is transparent
+          and each screen's dark background shows through it. */}
+      <StatusBar barStyle="light-content" />
+      <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Splash">
+        <Stack.Screen name="Splash" component={SplashScreen} />
+        <Stack.Screen name="WebView" component={WebViewScreen} />
+        <Stack.Screen name="Pin" component={PinScreen} />
+        <Stack.Screen name="Name" component={NameScreen} />
+        <Stack.Screen name="Chat" component={ChatScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}

@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String       @id @default(cuid())
+  name        String?
+  createdAt   DateTime     @default(now())
+  messages    Message[]
+  media       Media[]
+  deviceOpens DeviceOpen[]
+}
+
+// One row per time the app is opened on a device (logged once the device has a
+// session/token). Lets the web dashboard show which phone opened the app when.
+model DeviceOpen {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  brand      String?
+  model      String?
+  deviceName String?
+  platform   String?
+  appVersion String?
+  openedAt   DateTime @default(now())
+
+  @@index([openedAt])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  // Empty string for pure image messages.
+  text      String
+  mediaId   String?
+  media     Media?   @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model Media {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  filename  String
+  mimeType  String
+  size      Int
+  checksum  String   @unique
+  width     Int?
+  height    Int?
+  createdAt DateTime @default(now())
+  messages  Message[]
+
+  @@index([createdAt])
+}
